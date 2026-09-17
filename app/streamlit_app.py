@@ -1,244 +1,317 @@
 """
-Simplified Bengaluru Real Estate Price Predictor using baseline Random Forest.
-Uses only structured features (no NLP embeddings) for fast prediction.
+Bengaluru Real Estate Intelligence System - Streamlit Web Application.
+
+Run with: streamlit run app/streamlit_app.py
 """
 
 import sys
 from pathlib import Path
+
+# Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import streamlit as st
-import pandas as pd
-import numpy as np
 import folium
+import numpy as np
+import pandas as pd
+import streamlit as st
 from streamlit_folium import st_folium
 
 from src.data.bengaluru_localities import (
-    BENGALURU_LOCALITIES,
     BENGALURU_CENTER,
-    find_nearest_locality,
+    BENGALURU_LOCALITIES,
     BENGALURU_REFERENCE_POINTS,
+    find_nearest_locality,
 )
-from src.utils.currency import format_inr
 from src.features.engineer import engineer_features
 from src.features.preprocessor import StructuredPreprocessor, inverse_transform_target
+from src.utils.currency import format_inr
 from src.utils.io import load_pickle
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Page configuration
 st.set_page_config(
     page_title="Bengaluru Real Estate Intelligence",
     page_icon="🏠",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+# Custom CSS for clean UI styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: #1E3A8A;
+        margin-bottom: 0.2rem;
+    }
+    .sub-header {
+        font-size: 1.1rem;
+        color: #4B5563;
+        margin-bottom: 1.5rem;
+    }
+    .price-card {
+        background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+        padding: 1.8rem;
+        border-radius: 12px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .price-title {
+        font-size: 1rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.9;
+        margin-bottom: 0.5rem;
+    }
+    .price-value {
+        font-size: 2.8rem;
+        font-weight: 800;
+        margin-bottom: 0.5rem;
+    }
+    .price-subtitle {
+        font-size: 0.95rem;
+        opacity: 0.85;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_resource
-def load_models():
-    """Load trained models and preprocessors."""
+def load_prediction_pipeline():
+    """Load pre-trained artifacts once and cache them in memory."""
     try:
         kmeans = load_pickle(Path("artifacts/preprocessors/location_kmeans.pkl"))
         preprocessor = StructuredPreprocessor.load()
         model = load_pickle(Path("artifacts/models/baseline_random_forest.pkl"))
         return kmeans, preprocessor, model
     except Exception as e:
-        logger.error(f"Failed to load models: {e}")
+        logger.error(f"Error loading models: {e}")
         return None, None, None
 
 
-def create_bengaluru_map(center_lat, center_lon, selected_locality=None):
-    """Create an interactive Folium map of Bengaluru with locality markers."""
+def create_folium_map(lat: float, lon: float, selected_locality: str = None, zoom: int = 12):
+    """Create Folium map with key Bengaluru landmarks and selected property pin."""
     m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=12,
+        location=[lat, lon],
+        zoom_start=zoom,
         tiles="OpenStreetMap",
+        control_scale=True,
     )
 
+    # Add property pin
     if selected_locality:
         folium.Marker(
-            [center_lat, center_lon],
-            popup=f"<b>{selected_locality}</b>",
-            tooltip=selected_locality,
+            [lat, lon],
+            popup=f"<b>Selected Property</b><br>{selected_locality}",
+            tooltip=f"📍 {selected_locality}",
             icon=folium.Icon(color="red", icon="home", prefix="fa"),
         ).add_to(m)
 
-    it_hubs = {
-        "MG Road CBD": BENGALURU_REFERENCE_POINTS["cbd"],
-        "ITPL Whitefield": BENGALURU_REFERENCE_POINTS["itpl_whitefield"],
-        "Electronic City": BENGALURU_REFERENCE_POINTS["electronic_city"],
-        "Manyata Tech Park": BENGALURU_REFERENCE_POINTS["manyata_tech_park"],
-        "Bellandur ORR": BENGALURU_REFERENCE_POINTS["bellandur_ecospace"],
-        "BLR Airport": BENGALURU_REFERENCE_POINTS["airport"],
+    # Reference IT Hubs & Landmarks
+    landmarks = {
+        "MG Road CBD": (BENGALURU_REFERENCE_POINTS["cbd"], "darkblue", "briefcase"),
+        "ITPL Whitefield": (BENGALURU_REFERENCE_POINTS["itpl_whitefield"], "blue", "laptop"),
+        "Electronic City": (BENGALURU_REFERENCE_POINTS["electronic_city"], "blue", "laptop"),
+        "Manyata Tech Park": (BENGALURU_REFERENCE_POINTS["manyata_tech_park"], "blue", "laptop"),
+        "Bellandur ORR": (BENGALURU_REFERENCE_POINTS["bellandur_ecospace"], "blue", "laptop"),
+        "Kempegowda Airport": (BENGALURU_REFERENCE_POINTS["airport"], "purple", "plane"),
     }
 
-    for name, (lat, lon) in it_hubs.items():
+    for name, ((l_lat, l_lon), color, icon) in landmarks.items():
         folium.Marker(
-            [lat, lon],
+            [l_lat, l_lon],
             popup=f"<b>{name}</b>",
             tooltip=name,
-            icon=folium.Icon(color="blue", icon="building", prefix="fa"),
+            icon=folium.Icon(color=color, icon=icon, prefix="fa"),
         ).add_to(m)
 
     return m
 
 
 def main():
-    st.title("🏠 Bengaluru Real Estate Intelligence System")
-    st.markdown("""
-    **ML-Powered Price Prediction**
+    st.markdown('<div class="main-header">🏠 Bengaluru Real Estate Intelligence System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Automated property valuation powered by Random Forest regression & geospatial feature engineering.</div>', unsafe_allow_html=True)
 
-    Predicts Bengaluru property prices using Random Forest trained on 15,000 real estate listings.
-    """)
-
-    kmeans, preprocessor, model = load_models()
+    kmeans, preprocessor, model = load_prediction_pipeline()
 
     if model is None:
-        st.error("⚠️ Models not loaded. Please run: `python -m src.training.train_baseline`")
-        st.stop()
+        st.error("⚠️ Model artifacts missing. Please train models first using `python -m src.training.train_baseline`")
+        return
 
-    st.sidebar.header("Property Location")
+    # Initialize Session State
+    if "predicted_result" not in st.session_state:
+        st.session_state.predicted_result = None
+
+    # Sidebar inputs
+    st.sidebar.header("📍 Property Location")
 
     location_mode = st.sidebar.radio(
-        "Choose location method:",
-        ["🔍 Select from Locality List", "🗺️ Click on Map"],
+        "Location Input Method:",
+        ["🔍 Select Locality from List", "🗺️ Pick on Map"],
         index=0,
     )
 
-    selected_locality = None
-    latitude, longitude = BENGALURU_CENTER
+    selected_locality = "Koramangala"
+    latitude, longitude = BENGALURU_LOCALITIES["Koramangala"]
 
-    if location_mode == "🔍 Select from Locality List":
+    if location_mode == "🔍 Select Locality from List":
         locality_list = sorted(BENGALURU_LOCALITIES.keys())
+        default_index = locality_list.index("Koramangala") if "Koramangala" in locality_list else 0
         selected_locality = st.sidebar.selectbox(
-            "Select Locality",
+            "Select Locality (210+ areas)",
             options=locality_list,
-            index=locality_list.index("Koramangala") if "Koramangala" in locality_list else 0,
+            index=default_index,
         )
         latitude, longitude = BENGALURU_LOCALITIES[selected_locality]
         st.sidebar.success(f"📍 **{selected_locality}**")
-        st.sidebar.caption(f"Coordinates: {latitude:.4f}, {longitude:.4f}")
-    else:
-        st.sidebar.info("👇 Click anywhere on the map to select location")
-        map_obj = create_bengaluru_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1])
-        map_data = st_folium(map_obj, width=350, height=400, key="location_map")
+        st.sidebar.caption(f"Coordinates: `{latitude:.4f}, {longitude:.4f}`")
 
-        if map_data and map_data.get("last_clicked"):
-            clicked_lat = map_data["last_clicked"]["lat"]
-            clicked_lon = map_data["last_clicked"]["lng"]
-            latitude, longitude = clicked_lat, clicked_lon
-            nearest_loc, distance = find_nearest_locality(latitude, longitude)
+    else:
+        st.sidebar.info("Click anywhere on the map to choose coordinates:")
+        picker_map = create_folium_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1], zoom=11)
+        map_out = st_folium(
+            picker_map,
+            width=300,
+            height=300,
+            key="sidebar_map_picker",
+            returned_objects=["last_clicked"],
+        )
+
+        if map_out and map_out.get("last_clicked"):
+            c_lat = map_out["last_clicked"]["lat"]
+            c_lon = map_out["last_clicked"]["lng"]
+            latitude, longitude = c_lat, c_lon
+            nearest_loc, dist = find_nearest_locality(latitude, longitude)
             selected_locality = nearest_loc
-            st.sidebar.success(f"📍 **Nearest: {nearest_loc}**")
-            st.sidebar.caption(f"({distance:.2f} km from {nearest_loc})")
-            st.sidebar.caption(f"Coordinates: {latitude:.4f}, {longitude:.4f}")
+            st.sidebar.success(f"📍 Nearest: **{nearest_loc}** ({dist:.1f} km)")
+            st.sidebar.caption(f"Selected: `{latitude:.4f}, {longitude:.4f}`")
         else:
             selected_locality = "Koramangala"
             latitude, longitude = BENGALURU_LOCALITIES[selected_locality]
-            st.sidebar.info(f"Default: {selected_locality}")
 
-    st.sidebar.header("🏡 Property Details")
-    size = st.sidebar.slider("BHK (Bedrooms)", 1, 5, 3)
+    st.sidebar.header("🏡 Property Specifications")
+    size = st.sidebar.slider("Bedrooms (BHK)", min_value=1, max_value=5, value=3, step=1)
     total_sqft = st.sidebar.number_input(
-        "Total Area (Square Feet)",
+        "Super Built-up Area (Sq.Ft)",
         min_value=400.0,
         max_value=5000.0,
         value=1500.0,
         step=50.0,
     )
-    bath = st.sidebar.slider("Bathrooms", 1, 5, 2)
-    balcony = st.sidebar.slider("Balconies", 0, 3, 1)
+    bath = st.sidebar.slider("Bathrooms", min_value=1, max_value=5, value=2, step=1)
+    balcony = st.sidebar.slider("Balconies", min_value=0, max_value=3, value=1, step=1)
 
-    if st.sidebar.button("🔮 Predict Price", type="primary", use_container_width=True):
-        property_df = pd.DataFrame([{
-            "location": selected_locality,
-            "latitude": latitude,
-            "longitude": longitude,
-            "size": size,
-            "total_sqft": total_sqft,
-            "bath": bath,
-            "balcony": balcony,
-        }])
+    st.sidebar.header("📝 Description")
+    description = st.sidebar.text_area(
+        "Property Details",
+        value=f"Spacious {size} BHK apartment in {selected_locality} with modern amenities, clubhouse, gym, and covered parking.",
+        height=80,
+    )
 
-        with st.spinner("🔄 Calculating property value..."):
+    predict_clicked = st.sidebar.button("🔮 Predict Price", type="primary", use_container_width=True)
+
+    if predict_clicked:
+        with st.spinner("Calculating valuation using Random Forest model..."):
             try:
-                # Engineer features
-                property_eng, _ = engineer_features(property_df, kmeans_model=kmeans, is_train=False)
+                input_df = pd.DataFrame([{
+                    "location": selected_locality,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "size": size,
+                    "total_sqft": total_sqft,
+                    "bath": bath,
+                    "balcony": balcony,
+                }])
 
-                # Preprocess
-                X_struct = preprocessor.transform(property_eng)
+                # Feature engineering
+                engineered_df, _ = engineer_features(input_df, kmeans_model=kmeans, is_train=False)
 
-                # Predict
-                y_pred_log = model.predict(X_struct)
-                predicted_price = float(inverse_transform_target(y_pred_log)[0])
+                # Preprocessing
+                X_mat = preprocessor.transform(engineered_df)
 
-                # Confidence interval (±10% for demo)
-                lower_price = predicted_price * 0.90
-                upper_price = predicted_price * 1.10
+                # Model Prediction
+                log_pred = model.predict(X_mat)
+                pred_price = float(inverse_transform_target(log_pred)[0])
 
-            except Exception as e:
-                st.error(f"Prediction failed: {e}")
-                logger.error(f"Prediction error: {e}", exc_info=True)
-                st.stop()
+                # Store in session state
+                st.session_state.predicted_result = {
+                    "price": pred_price,
+                    "lower": pred_price * 0.90,
+                    "upper": pred_price * 1.10,
+                    "price_per_sqft": pred_price / total_sqft,
+                    "locality": selected_locality,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "size": size,
+                    "total_sqft": total_sqft,
+                    "bath": bath,
+                    "balcony": balcony,
+                    "description": description,
+                }
+            except Exception as ex:
+                st.error(f"Prediction failed: {ex}")
+                logger.error(f"Prediction calculation error: {ex}", exc_info=True)
 
-        st.success("✅ **Prediction Complete!**")
+    # ── Display View ─────────────────────────────────────────────────────────
+    res = st.session_state.predicted_result
+
+    if res is not None:
+        # Display Results Banner
+        st.markdown(f"""
+        <div class="price-card">
+            <div class="price-title">Estimated Market Value ({res['locality']})</div>
+            <div class="price-value">{format_inr(res['price'])}</div>
+            <div class="price-subtitle">Estimated Range (±10%): {format_inr(res['lower'])} – {format_inr(res['upper'])}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Summary Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("📍 Location", res["locality"])
+        m2.metric("🏠 Layout", f"{res['size']} BHK, {res['bath']} Bath")
+        m3.metric("📐 Area", f"{res['total_sqft']:,.0f} sq.ft")
+        m4.metric("📊 Rate / Sq.Ft", f"₹{res['price_per_sqft']:,.0f}")
+
         st.markdown("---")
-        st.markdown("### 💰 Predicted Property Price")
 
-        price_col1, price_col2, price_col3 = st.columns([2, 2, 1])
+        # Map & Locality Context
+        col_left, col_right = st.columns([3, 2])
 
-        with price_col1:
-            st.markdown(f"## {format_inr(predicted_price)}")
-            st.caption("Estimated Market Value")
+        with col_left:
+            st.subheader("📍 Property Location & Surroundings")
+            prop_map = create_folium_map(res["latitude"], res["longitude"], selected_locality=res["locality"], zoom=13)
+            # Use returned_objects=[] so this map never fires unwanted Streamlit reruns
+            st_folium(prop_map, width=650, height=400, key="result_display_map", returned_objects=[])
 
-        with price_col2:
-            st.metric(
-                "Price Range (±10%)",
-                f"{format_inr(lower_price)} - {format_inr(upper_price)}",
-            )
-
-        with price_col3:
-            price_per_sqft = predicted_price / total_sqft
-            st.metric("Per Sqft", f"₹{price_per_sqft:,.0f}")
-
-        st.info("ℹ️ **Model:** Random Forest trained on 10,837 Bengaluru properties (R² = 0.9995)")
-
-        st.markdown("---")
-        st.subheader("📋 Property Summary")
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric("📍 Location", selected_locality)
-        with col2:
-            st.metric("🏠 Configuration", f"{size} BHK, {bath} Bath")
-        with col3:
-            st.metric("📐 Area", f"{total_sqft:,.0f} sqft")
-        with col4:
-            st.metric("🪟 Balconies", balcony)
-
-        st.markdown("---")
-        st.subheader("📍 Property Location on Map")
-        main_map = create_bengaluru_map(latitude, longitude, selected_locality)
-        st_folium(main_map, width=None, height=450, key="main_map")
+        with col_right:
+            st.subheader("📋 Valuation Summary")
+            summary_table = pd.DataFrame([
+                {"Attribute": "Selected Locality", "Value": str(res["locality"])},
+                {"Attribute": "Bedrooms (BHK)", "Value": f"{res['size']} BHK"},
+                {"Attribute": "Bathrooms", "Value": f"{res['bath']}"},
+                {"Attribute": "Balconies", "Value": f"{res['balcony']}"},
+                {"Attribute": "Total Area", "Value": f"{res['total_sqft']:,.0f} sq.ft"},
+                {"Attribute": "Valuation Rate", "Value": f"₹{res['price_per_sqft']:,.0f} / sq.ft"},
+                {"Attribute": "Algorithm", "Value": "Random Forest Regressor (200 Trees)"},
+                {"Attribute": "Training Dataset", "Value": "10,837 Bengaluru Properties (R²=0.9995)"},
+            ])
+            st.dataframe(summary_table, hide_index=True, use_container_width=True)
 
     else:
-        st.info("👈 Configure property details in the sidebar and click **Predict Price**")
-        st.subheader("🗺️ Bengaluru IT Hubs & Major Localities")
-        overview_map = create_bengaluru_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1])
-        st_folium(overview_map, width=900, height=500, key="overview_map")
+        # Default State: Welcome overview
+        st.info("👈 Choose your property location and specs in the sidebar, then click **🔮 Predict Price** to calculate the market valuation.")
+
+        st.subheader("🗺️ Bengaluru Key Localities & IT Corridors")
+        overview_map = create_folium_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1], zoom=11)
+        st_folium(overview_map, width=950, height=480, key="welcome_overview_map", returned_objects=[])
 
     st.markdown("---")
-    st.markdown(f"""
-    **About**: Bengaluru Real Estate Intelligence System predicts property prices using:
-    - **Structured Features**: BHK, sqft, bathrooms, balconies, location
-    - **Distance Engineering**: Proximity to CBD (MG Road), IT hubs (ITPL, Electronic City), BLR Airport
-    - **Location Clustering**: KMeans clustering on geographic coordinates
-    - **Model**: Random Forest (200 trees) trained on 10,837 properties
-
-    **Coverage**: {len(BENGALURU_LOCALITIES)} localities across North, South, East, West Bengaluru
-
-    Built with: Python, scikit-learn, Streamlit, Folium
-    """)
+    st.caption(f"Bengaluru Real Estate Valuation System | Covering {len(BENGALURU_LOCALITIES)} localities across Bengaluru | Built with Streamlit, scikit-learn, Folium")
 
 
 if __name__ == "__main__":
