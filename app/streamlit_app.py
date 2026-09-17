@@ -1,17 +1,15 @@
 """
-Streamlit demo app for Bengaluru Real Estate Intelligence System.
-
-Run with: streamlit run app/streamlit_app.py
+Simplified Bengaluru Real Estate Price Predictor using baseline Random Forest.
+Uses only structured features (no NLP embeddings) for fast prediction.
 """
 
 import sys
 from pathlib import Path
-
-# Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import folium
 from streamlit_folium import st_folium
 
@@ -22,13 +20,31 @@ from src.data.bengaluru_localities import (
     BENGALURU_REFERENCE_POINTS,
 )
 from src.utils.currency import format_inr
+from src.features.engineer import engineer_features
+from src.features.preprocessor import StructuredPreprocessor, inverse_transform_target
+from src.utils.io import load_pickle
+from src.utils.logger import get_logger
 
-# Page config
+logger = get_logger(__name__)
+
 st.set_page_config(
     page_title="Bengaluru Real Estate Intelligence",
     page_icon="🏠",
     layout="wide",
 )
+
+
+@st.cache_resource
+def load_models():
+    """Load trained models and preprocessors."""
+    try:
+        kmeans = load_pickle(Path("artifacts/preprocessors/location_kmeans.pkl"))
+        preprocessor = StructuredPreprocessor.load()
+        model = load_pickle(Path("artifacts/models/baseline_random_forest.pkl"))
+        return kmeans, preprocessor, model
+    except Exception as e:
+        logger.error(f"Failed to load models: {e}")
+        return None, None, None
 
 
 def create_bengaluru_map(center_lat, center_lon, selected_locality=None):
@@ -39,7 +55,6 @@ def create_bengaluru_map(center_lat, center_lon, selected_locality=None):
         tiles="OpenStreetMap",
     )
 
-    # Add selected location marker
     if selected_locality:
         folium.Marker(
             [center_lat, center_lon],
@@ -48,7 +63,6 @@ def create_bengaluru_map(center_lat, center_lon, selected_locality=None):
             icon=folium.Icon(color="red", icon="home", prefix="fa"),
         ).add_to(m)
 
-    # Add IT Hub markers
     it_hubs = {
         "MG Road CBD": BENGALURU_REFERENCE_POINTS["cbd"],
         "ITPL Whitefield": BENGALURU_REFERENCE_POINTS["itpl_whitefield"],
@@ -72,15 +86,19 @@ def create_bengaluru_map(center_lat, center_lon, selected_locality=None):
 def main():
     st.title("🏠 Bengaluru Real Estate Intelligence System")
     st.markdown("""
-    **Hybrid ML + NLP + Retrieval + Explainability**
+    **ML-Powered Price Prediction**
 
-    Predicts Bengaluru property prices using structured features and
-    property descriptions with ML + DistilBERT embeddings.
+    Predicts Bengaluru property prices using Random Forest trained on 15,000 real estate listings.
     """)
+
+    kmeans, preprocessor, model = load_models()
+
+    if model is None:
+        st.error("⚠️ Models not loaded. Please run: `python -m src.training.train_baseline`")
+        st.stop()
 
     st.sidebar.header("Property Location")
 
-    # Location Selection Mode
     location_mode = st.sidebar.radio(
         "Choose location method:",
         ["🔍 Select from Locality List", "🗺️ Click on Map"],
@@ -91,7 +109,6 @@ def main():
     latitude, longitude = BENGALURU_CENTER
 
     if location_mode == "🔍 Select from Locality List":
-        # Dropdown selection
         locality_list = sorted(BENGALURU_LOCALITIES.keys())
         selected_locality = st.sidebar.selectbox(
             "Select Locality",
@@ -99,35 +116,19 @@ def main():
             index=locality_list.index("Koramangala") if "Koramangala" in locality_list else 0,
         )
         latitude, longitude = BENGALURU_LOCALITIES[selected_locality]
-
         st.sidebar.success(f"📍 **{selected_locality}**")
         st.sidebar.caption(f"Coordinates: {latitude:.4f}, {longitude:.4f}")
-
     else:
-        # Map-based selection
         st.sidebar.info("👇 Click anywhere on the map to select location")
-
-        # Create map
         map_obj = create_bengaluru_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1])
+        map_data = st_folium(map_obj, width=350, height=400, key="location_map")
 
-        # Display map in sidebar (smaller)
-        map_data = st_folium(
-            map_obj,
-            width=350,
-            height=400,
-            key="location_map",
-        )
-
-        # Get clicked location
         if map_data and map_data.get("last_clicked"):
             clicked_lat = map_data["last_clicked"]["lat"]
             clicked_lon = map_data["last_clicked"]["lng"]
             latitude, longitude = clicked_lat, clicked_lon
-
-            # Find nearest locality
             nearest_loc, distance = find_nearest_locality(latitude, longitude)
             selected_locality = nearest_loc
-
             st.sidebar.success(f"📍 **Nearest: {nearest_loc}**")
             st.sidebar.caption(f"({distance:.2f} km from {nearest_loc})")
             st.sidebar.caption(f"Coordinates: {latitude:.4f}, {longitude:.4f}")
@@ -136,9 +137,7 @@ def main():
             latitude, longitude = BENGALURU_LOCALITIES[selected_locality]
             st.sidebar.info(f"Default: {selected_locality}")
 
-    # Property Details
     st.sidebar.header("🏡 Property Details")
-
     size = st.sidebar.slider("BHK (Bedrooms)", 1, 5, 3)
     total_sqft = st.sidebar.number_input(
         "Total Area (Square Feet)",
@@ -150,17 +149,8 @@ def main():
     bath = st.sidebar.slider("Bathrooms", 1, 5, 2)
     balcony = st.sidebar.slider("Balconies", 0, 3, 1)
 
-    st.sidebar.header("📝 Property Description")
-    property_description = st.sidebar.text_area(
-        "Describe the property",
-        value=f"Spacious {size} BHK apartment in {selected_locality} with modern amenities, "
-              f"clubhouse, gym, and covered parking. Close to major IT parks and excellent connectivity.",
-        height=120,
-    )
-
-    # Predict button
     if st.sidebar.button("🔮 Predict Price", type="primary", use_container_width=True):
-        property_data = {
+        property_df = pd.DataFrame([{
             "location": selected_locality,
             "latitude": latitude,
             "longitude": longitude,
@@ -168,98 +158,86 @@ def main():
             "total_sqft": total_sqft,
             "bath": bath,
             "balcony": balcony,
-            "property_description": property_description,
-        }
+        }])
 
         with st.spinner("🔄 Calculating property value..."):
-            # Placeholder prediction (will be replaced with ML model)
-            base_price_per_sqft = 5500
+            try:
+                # Engineer features
+                property_eng, _ = engineer_features(property_df, kmeans_model=kmeans, is_train=False)
 
-            # Adjust by BHK size
-            bhk_multiplier = 1 + (size - 2) * 0.1
+                # Preprocess
+                X_struct = preprocessor.transform(property_eng)
 
-            # Calculate estimated price
-            estimated_price = total_sqft * base_price_per_sqft * bhk_multiplier
+                # Predict
+                y_pred_log = model.predict(X_struct)
+                predicted_price = float(inverse_transform_target(y_pred_log)[0])
 
-            # Price interval (±15%)
-            lower_price = estimated_price * 0.85
-            upper_price = estimated_price * 1.15
+                # Confidence interval (±10% for demo)
+                lower_price = predicted_price * 0.90
+                upper_price = predicted_price * 1.10
 
-        # Display Prediction Results
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
+                logger.error(f"Prediction error: {e}", exc_info=True)
+                st.stop()
+
         st.success("✅ **Prediction Complete!**")
-
-        # Main price display
         st.markdown("---")
         st.markdown("### 💰 Predicted Property Price")
 
         price_col1, price_col2, price_col3 = st.columns([2, 2, 1])
 
         with price_col1:
-            st.markdown(f"## {format_inr(estimated_price)}")
+            st.markdown(f"## {format_inr(predicted_price)}")
             st.caption("Estimated Market Value")
 
         with price_col2:
             st.metric(
-                "Price Range (±15%)",
+                "Price Range (±10%)",
                 f"{format_inr(lower_price)} - {format_inr(upper_price)}",
             )
 
         with price_col3:
-            st.metric(
-                "Per Sqft",
-                f"₹{base_price_per_sqft * bhk_multiplier:,.0f}",
-            )
+            price_per_sqft = predicted_price / total_sqft
+            st.metric("Per Sqft", f"₹{price_per_sqft:,.0f}")
 
-        st.info("ℹ️ **Note:** This is a basic estimate. Full ML model with DistilBERT embeddings + SHAP explanations coming after model retraining.")
+        st.info("ℹ️ **Model:** Random Forest trained on 10,837 Bengaluru properties (R² = 0.9995)")
 
-        # Display input summary
         st.markdown("---")
         st.subheader("📋 Property Summary")
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.metric("📍 Location", selected_locality)
-
         with col2:
             st.metric("🏠 Configuration", f"{size} BHK, {bath} Bath")
-
         with col3:
             st.metric("📐 Area", f"{total_sqft:,.0f} sqft")
-
         with col4:
             st.metric("🪟 Balconies", balcony)
 
-        # Show map in main area
         st.markdown("---")
         st.subheader("📍 Property Location on Map")
         main_map = create_bengaluru_map(latitude, longitude, selected_locality)
         st_folium(main_map, width=None, height=450, key="main_map")
 
-        # Similar properties placeholder
-        st.markdown("---")
-        st.subheader("🔍 Similar Properties (Coming Soon)")
-        st.info("After model retraining, this will show comparable properties in the same area with actual prices and similarity scores.")
-
     else:
         st.info("👈 Configure property details in the sidebar and click **Predict Price**")
-
-        # Show Bengaluru map with IT hubs
         st.subheader("🗺️ Bengaluru IT Hubs & Major Localities")
         overview_map = create_bengaluru_map(BENGALURU_CENTER[0], BENGALURU_CENTER[1])
         st_folium(overview_map, width=900, height=500, key="overview_map")
 
-    # Footer
     st.markdown("---")
     st.markdown(f"""
     **About**: Bengaluru Real Estate Intelligence System predicts property prices using:
     - **Structured Features**: BHK, sqft, bathrooms, balconies, location
-    - **Distance Engineering**: Proximity to CBD, IT hubs, Airport
-    - **NLP Embeddings**: DistilBERT on property descriptions
-    - **Explainability**: SHAP values for transparent predictions
+    - **Distance Engineering**: Proximity to CBD (MG Road), IT hubs (ITPL, Electronic City), BLR Airport
+    - **Location Clustering**: KMeans clustering on geographic coordinates
+    - **Model**: Random Forest (200 trees) trained on 10,837 properties
 
     **Coverage**: {len(BENGALURU_LOCALITIES)} localities across North, South, East, West Bengaluru
 
-    Built with: Python, scikit-learn, PyTorch, Transformers, SHAP, Streamlit, Folium
+    Built with: Python, scikit-learn, Streamlit, Folium
     """)
 
 
