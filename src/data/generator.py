@@ -1,5 +1,5 @@
 """
-Property description generator.
+Property description generator for Bengaluru real estate.
 
 Generates realistic property descriptions from structured features.
 
@@ -31,124 +31,140 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Template components ──────────────────────────────────────────────────────
+# ── Template components for Bengaluru real estate ────────────────────────────
 
 PROPERTY_TYPES = [
-    "single-family home", "residential property", "family residence",
-    "house", "dwelling", "home",
+    "apartment", "flat", "independent house", "villa",
+    "residential property", "duplex", "builder floor",
 ]
 
-CONDITION_TEMPLATES = {
-    "new": ["recently built", "modern construction", "newly constructed"],
-    "mid": ["well-maintained", "in good condition", "established"],
-    "old": ["classic", "vintage", "character-filled older"],
+BHK_DESCRIPTIONS = {
+    1: ["compact 1 BHK", "cozy 1 BHK", "well-designed 1 BHK", "modern 1 BHK"],
+    2: ["spacious 2 BHK", "comfortable 2 BHK", "well-planned 2 BHK", "modern 2 BHK"],
+    3: ["spacious 3 BHK", "premium 3 BHK", "luxurious 3 BHK", "well-appointed 3 BHK"],
+    4: ["expansive 4 BHK", "premium 4 BHK", "luxurious 4 BHK", "ultra-spacious 4 BHK"],
+    5: ["magnificent 5 BHK", "ultra-luxury 5 BHK", "grand 5 BHK", "palatial 5 BHK"],
 }
 
-AREA_DESCRIPTIONS = {
-    "urban_dense": [
-        "in a bustling urban area", "in a densely populated neighborhood",
-        "located in a vibrant city block", "in a lively metropolitan area",
-    ],
-    "urban": [
-        "in a well-connected urban location", "in a city neighborhood",
-        "situated in a residential urban district",
-    ],
-    "suburban": [
-        "in a quiet suburban neighborhood", "in a family-friendly suburban area",
-        "nestled in a peaceful residential community",
-    ],
-    "rural": [
-        "in a spacious rural setting", "in a low-density area with open space",
-        "in a tranquil countryside location",
-    ],
+AREA_SIZE_DESCRIPTIONS = {
+    "compact": ["efficient use of space", "smartly designed", "optimized layout"],
+    "medium": ["well-proportioned", "comfortable layout", "good space utilization"],
+    "spacious": ["generous living space", "sprawling layout", "ample room"],
+    "luxury": ["expansive interiors", "palatial space", "ultra-luxurious dimensions"],
 }
 
-INCOME_DESCRIPTIONS = {
-    "high": [
-        "affluent neighborhood", "upscale community", "premium location",
-        "sought-after area", "high-value district",
+AMENITIES = [
+    "24/7 security", "covered parking", "clubhouse", "swimming pool",
+    "gym", "children's play area", "power backup", "lift",
+    "landscaped gardens", "jogging track", "indoor games room",
+    "community hall", "intercom facility",
+]
+
+LOCATION_DESCRIPTIONS = {
+    "premium": [
+        "located in the heart of {location}", "in the prestigious {location} area",
+        "situated in prime {location}", "nestled in sought-after {location}",
     ],
-    "mid_high": [
-        "desirable area", "growing community", "popular residential zone",
+    "good": [
+        "located in {location}", "situated in {location}",
+        "in the established {location} locality", "in {location}",
     ],
-    "mid": [
-        "established community", "stable neighborhood", "accessible area",
-    ],
-    "low": [
-        "affordable area", "developing neighborhood", "budget-friendly location",
+    "emerging": [
+        "in the upcoming {location} area", "in the developing {location} locality",
+        "strategically located in {location}",
     ],
 }
 
-ROOM_DESCRIPTIONS = [
-    "featuring {rooms:.1f} rooms on average",
-    "with approximately {rooms:.1f} rooms per unit",
-    "offering {rooms:.1f} rooms per residence",
+IT_HUB_PROXIMITY = [
+    "close to major IT parks", "near tech corridor", "minutes from IT hubs",
+    "walking distance to tech offices", "near Whitefield IT zone",
+    "close to Electronic City", "near major tech companies",
+    "excellent connectivity to IT hubs",
 ]
 
-BEDROOM_PHRASES = [
-    "including {bedrooms:.1f} bedrooms",
-    "with {bedrooms:.1f} bedrooms",
-    "{bedrooms:.1f} bedrooms included",
+TRANSPORT_CONNECTIVITY = [
+    "excellent Metro connectivity", "near Metro station",
+    "close to Outer Ring Road", "great public transport access",
+    "well-connected by road", "easy access to Hosur Road",
+    "near major transport routes", "excellent connectivity",
 ]
 
-COASTAL_PHRASES = [
-    "with easy access to the coast", "near the California coastline",
-    "within reach of Pacific beaches",
+BUILDING_QUALITY = {
+    "budget": ["decent construction quality", "functional design", "ready to move in"],
+    "mid": ["good construction quality", "modern amenities", "quality fittings"],
+    "premium": ["premium construction", "high-end fittings", "luxury finishes"],
+    "luxury": ["ultra-luxury construction", "imported fittings", "world-class amenities"],
+}
+
+BALCONY_PHRASES = [
+    "with {balcony} balcony", "featuring {balcony} balcony",
+    "{balcony} balcony included", "includes {balcony} balcony",
 ]
 
-INLAND_PHRASES = [
-    "in the California interior", "in the inland region",
-    "away from the coastline",
+BATHROOM_PHRASES = [
+    "with {bath} bathrooms", "{bath} modern bathrooms",
+    "featuring {bath} well-appointed bathrooms",
 ]
 
 CLOSING_PHRASES = [
-    "A solid choice for buyers looking for value.",
-    "Ideal for families and professionals.",
-    "A great opportunity in this market.",
-    "Well-positioned for long-term value.",
-    "Worth considering for its location and features.",
-    "A property with real potential.",
+    "Ideal for families and working professionals.",
+    "Perfect for those seeking comfort and convenience.",
+    "Great investment opportunity in a prime location.",
+    "Excellent choice for modern urban living.",
+    "A property that combines comfort with connectivity.",
+    "Worth considering for its location and amenities.",
 ]
 
 
-def _classify_density(population_per_household: float) -> str:
-    """Classify area type based on average occupancy."""
-    if population_per_household > 5:
-        return "urban_dense"
-    elif population_per_household > 3:
-        return "urban"
-    elif population_per_household > 2:
-        return "suburban"
+def _classify_area_size(total_sqft: float) -> str:
+    """Classify property size."""
+    if total_sqft < 800:
+        return "compact"
+    elif total_sqft < 1200:
+        return "medium"
+    elif total_sqft < 1800:
+        return "spacious"
     else:
-        return "rural"
+        return "luxury"
 
 
-def _classify_income(median_income: float) -> str:
-    """Classify income bracket."""
-    if median_income > 6:
-        return "high"
-    elif median_income > 4:
-        return "mid_high"
-    elif median_income > 2.5:
+def _classify_price_segment(price: float) -> str:
+    """Classify price segment in INR."""
+    # Price in rupees
+    if price < 4000000:  # < 40 Lakh
+        return "budget"
+    elif price < 8000000:  # 40L - 80L
         return "mid"
-    else:
-        return "low"
+    elif price < 15000000:  # 80L - 1.5 Cr
+        return "premium"
+    else:  # > 1.5 Cr
+        return "luxury"
 
 
-def _classify_age(age: float) -> str:
-    """Classify property condition from housing age."""
-    if age < 10:
-        return "new"
-    elif age < 30:
-        return "mid"
-    else:
-        return "old"
+def _classify_location_tier(location: str) -> str:
+    """Classify location into premium/good/emerging tiers."""
+    premium_areas = [
+        "Koramangala", "Indiranagar", "Jayanagar", "JP Nagar", "HSR Layout",
+        "Whitefield", "Marathahalli", "MG Road", "Brigade Road", "Malleshwaram",
+        "Basavanagudi", "Rajajinagar", "Sadashiva Nagar", "Yelahanka New Town",
+    ]
 
+    emerging_areas = [
+        "Sarjapur Road", "Hosa Road", "Jigani", "Chandapura", "Begur",
+        "Kengeri", "Uttarahalli", "Ramamurthy Nagar",
+    ]
 
-def _is_coastal(longitude: float, latitude: float) -> bool:
-    """Rough heuristic: coastal if longitude < -121 and latitude > 34."""
-    # Very approximate — California coast runs north-south roughly at -121 to -118
-    return longitude < -120.5 or (longitude < -117.5 and latitude < 34)
+    location_lower = location.lower()
+
+    for premium in premium_areas:
+        if premium.lower() in location_lower:
+            return "premium"
+
+    for emerging in emerging_areas:
+        if emerging.lower() in location_lower:
+            return "emerging"
+
+    return "good"
 
 
 def generate_single_description(row: pd.Series, rng: random.Random) -> str:
@@ -156,45 +172,61 @@ def generate_single_description(row: pd.Series, rng: random.Random) -> str:
     Generate a natural-language property description from a single row.
 
     Args:
-        row: A row from the housing DataFrame.
+        row: A row from the Bengaluru housing DataFrame.
         rng: Seeded random.Random instance for reproducibility.
 
     Returns:
         A 2-4 sentence property description string.
     """
-    # Classify features into human-readable categories
-    age_class = _classify_age(row["housing_median_age"])
-    pop_per_hh = row.get("population_per_household", row["population"] / max(row["households"], 1)) \
-        if "population_per_household" not in row.index else row.get("population", 3) / max(row.get("households", 1), 1)
-    density_class = _classify_density(pop_per_hh)
-    income_class = _classify_income(row["median_income"])
-    coastal = _is_coastal(row["longitude"], row["latitude"])
+    # Extract features
+    size = int(row.get("size", 2))
+    total_sqft = row.get("total_sqft", 1000)
+    bath = int(row.get("bath", 2))
+    balcony = int(row.get("balcony", 1))
+    location = row.get("location", "Bengaluru")
+    price = row.get("price", 5000000)
+
+    # Classify features
+    area_class = _classify_area_size(total_sqft)
+    price_class = _classify_price_segment(price)
+    location_tier = _classify_location_tier(location)
 
     # Build the description sentence by sentence
     sentences = []
 
-    # Sentence 1: Property type + condition + location
+    # Sentence 1: BHK + property type + location
+    bhk_desc = rng.choice(BHK_DESCRIPTIONS.get(size, BHK_DESCRIPTIONS[3]))
     prop_type = rng.choice(PROPERTY_TYPES)
-    condition = rng.choice(CONDITION_TEMPLATES[age_class])
-    area_desc = rng.choice(AREA_DESCRIPTIONS[density_class])
-    sentences.append(f"This {condition} {prop_type} is located {area_desc}.")
+    location_template = rng.choice(LOCATION_DESCRIPTIONS[location_tier])
+    location_phrase = location_template.format(location=location)
+    sentences.append(f"This {bhk_desc} {prop_type} is {location_phrase}.")
 
-    # Sentence 2: Room and bedroom info
-    room_desc = rng.choice(ROOM_DESCRIPTIONS).format(rooms=row["total_rooms"])
-    bed_desc = rng.choice(BEDROOM_PHRASES).format(bedrooms=row["total_bedrooms"])
-    sentences.append(f"The property {room_desc}, {bed_desc}.")
+    # Sentence 2: Area + bathrooms + balcony
+    area_quality = rng.choice(AREA_SIZE_DESCRIPTIONS[area_class])
+    bath_phrase = rng.choice(BATHROOM_PHRASES).format(bath=bath)
 
-    # Sentence 3: Neighborhood character (income + coastal)
-    neighborhood = rng.choice(INCOME_DESCRIPTIONS[income_class])
-    if coastal:
-        coast_phrase = rng.choice(COASTAL_PHRASES)
-        sentences.append(f"Situated in a {neighborhood}, {coast_phrase}.")
+    if balcony > 0:
+        balcony_text = "balconies" if balcony > 1 else "balcony"
+        balcony_phrase = rng.choice(BALCONY_PHRASES).format(balcony=balcony)
+        sentences.append(f"The property features {area_quality}, {bath_phrase} and {balcony_phrase}.")
     else:
-        inland_phrase = rng.choice(INLAND_PHRASES)
-        sentences.append(f"Located in a {neighborhood}, {inland_phrase}.")
+        sentences.append(f"The property features {area_quality} with {bath_phrase}.")
 
-    # Sentence 4: Closing (50% chance to keep descriptions varied in length)
+    # Sentence 3: Amenities + connectivity/IT proximity
+    selected_amenities = rng.sample(AMENITIES, min(3, len(AMENITIES)))
+    amenity_str = ", ".join(selected_amenities)
+
+    # Choose between IT hub proximity or transport connectivity
     if rng.random() > 0.5:
+        connectivity = rng.choice(IT_HUB_PROXIMITY)
+    else:
+        connectivity = rng.choice(TRANSPORT_CONNECTIVITY)
+
+    quality_desc = rng.choice(BUILDING_QUALITY[price_class])
+    sentences.append(f"Amenities include {amenity_str}, with {quality_desc} and {connectivity}.")
+
+    # Sentence 4: Closing (70% chance)
+    if rng.random() > 0.3:
         sentences.append(rng.choice(CLOSING_PHRASES))
 
     return " ".join(sentences)
@@ -202,53 +234,44 @@ def generate_single_description(row: pd.Series, rng: random.Random) -> str:
 
 def generate_descriptions(
     df: pd.DataFrame,
-    seed: int = None,
-) -> pd.Series:
+    seed: int = 42,
+) -> pd.DataFrame:
     """
-    Generate property descriptions for all rows in the DataFrame.
+    Generate property descriptions for the entire DataFrame.
 
     Args:
-        df: DataFrame with structured housing features.
-        seed: Random seed for reproducibility. Defaults to config seed.
+        df: Housing DataFrame with Bengaluru real estate features.
+        seed: Random seed for reproducibility.
 
     Returns:
-        pd.Series of description strings, same index as df.
+        DataFrame with added 'property_description' column.
     """
-    if seed is None:
-        seed = AppConfig.data.random_seed
+    logger.info(f"Generating property descriptions for {len(df)} listings (seed={seed})")
 
     rng = random.Random(seed)
-    logger.info(f"Generating property descriptions for {len(df)} listings (seed={seed})")
+    df = df.copy()
 
     descriptions = []
     for idx, row in df.iterrows():
         desc = generate_single_description(row, rng)
         descriptions.append(desc)
 
-    result = pd.Series(descriptions, index=df.index, name="property_description")
+    df["property_description"] = descriptions
 
-    # Log statistics
-    lengths = result.str.len()
-    word_counts = result.str.split().str.len()
-    logger.info(
-        f"Description stats — "
-        f"chars: {lengths.mean():.0f} avg ({lengths.min()}-{lengths.max()}), "
-        f"words: {word_counts.mean():.0f} avg ({word_counts.min()}-{word_counts.max()})"
-    )
+    logger.info(f"Generated {len(descriptions)} property descriptions")
+    logger.info(f"Avg description length: {df['property_description'].str.len().mean():.0f} chars")
 
-    return result
+    return df
 
 
 if __name__ == "__main__":
-    from src.data.loader import load_california_housing
+    # Test generator with sample Bengaluru data
+    from src.data.bengaluru_loader import load_bengaluru_housing
 
-    df = load_california_housing()
-    descriptions = generate_descriptions(df)
+    df = load_bengaluru_housing()
+    df_with_desc = generate_descriptions(df.head(10), seed=42)
 
-    print(f"\n{'='*60}")
-    print("Sample Generated Descriptions")
-    print(f"{'='*60}")
-    for i in range(5):
-        idx = i * 4000  # sample diverse rows
-        print(f"\n--- Row {idx} (price: ${df.iloc[idx]['median_house_value']:,.0f}) ---")
-        print(descriptions.iloc[idx])
+    print("\n=== Sample Generated Descriptions ===\n")
+    for idx, row in df_with_desc.iterrows():
+        print(f"Location: {row['location']}, {row['size']} BHK, {row['total_sqft']} sqft")
+        print(f"Description: {row['property_description']}\n")
