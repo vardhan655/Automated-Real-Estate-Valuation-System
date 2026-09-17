@@ -1,13 +1,13 @@
 """
-Schema validation for the loaded dataset.
+Schema validation for the loaded Bengaluru dataset.
 
 This module checks for:
-- Expected columns present
+- Expected columns present (location, size, total_sqft, bath, balcony, price, latitude, longitude)
 - Data types correct
 - No unexpected nulls
-- Value ranges within plausible bounds
+- Value ranges within plausible bounds for Bengaluru real estate
 - Duplicate detection
-- Target variable sanity checks
+- Target variable sanity checks (INR price)
 
 Design decision: validation runs early and fails fast, before any
 feature engineering or model training contaminates the pipeline.
@@ -20,6 +20,7 @@ import pandas as pd
 
 from src.config import AppConfig
 from src.utils.logger import get_logger
+from src.utils.currency import format_inr
 
 logger = get_logger(__name__)
 
@@ -48,7 +49,7 @@ class ValidationReport:
 
 def validate_dataset(df: pd.DataFrame) -> ValidationReport:
     """
-    Run all validation checks on the raw dataset.
+    Run all validation checks on the raw Bengaluru dataset.
 
     Args:
         df: Raw DataFrame to validate.
@@ -59,7 +60,7 @@ def validate_dataset(df: pd.DataFrame) -> ValidationReport:
     report = ValidationReport()
     config = AppConfig.data
 
-    logger.info("Running dataset validation checks...")
+    logger.info("Running Bengaluru dataset validation checks...")
 
     # ── 1. Expected columns ──────────────────────────────────────────────
     expected_cols = (
@@ -109,21 +110,17 @@ def validate_dataset(df: pd.DataFrame) -> ValidationReport:
     report.add(
         "Target has no negatives",
         (target >= 0).all(),
-        f"min={target.min():,.0f}",
+        f"min={format_inr(target.min())}",
     )
     report.add(
         "Target not constant",
         target.nunique() > 1,
         f"unique values: {target.nunique()}",
     )
-
-    # Check for capped values (California Housing caps at $500,001)
-    n_capped = (target >= config.target_cap).sum()
-    pct_capped = n_capped / len(target) * 100
     report.add(
-        "Target cap check",
-        pct_capped < 10,  # >10% capped would be a concern
-        f"{n_capped} rows ({pct_capped:.1f}%) at cap value ${config.target_cap:,.0f}",
+        "Price range plausible (₹5L - ₹50Cr)",
+        (target >= 500000).all() and (target <= 500000000).all(),
+        f"range [{format_inr(target.min())}, {format_inr(target.max())}]",
     )
 
     # ── 6. Numeric feature ranges ────────────────────────────────────────
@@ -136,15 +133,15 @@ def validate_dataset(df: pd.DataFrame) -> ValidationReport:
                 f"range [{df[col].min():.2f}, {df[col].max():.2f}]",
             )
 
-    # ── 7. Location range check ──────────────────────────────────────────
+    # ── 7. Location range check (Bengaluru Metropolitan Region) ──────────
     if "latitude" in df.columns and "longitude" in df.columns:
-        lat_ok = df["latitude"].between(32, 42).all()
-        lon_ok = df["longitude"].between(-125, -114).all()
+        lat_ok = df["latitude"].between(12.6, 13.4).all()
+        lon_ok = df["longitude"].between(77.2, 78.0).all()
         report.add(
-            "Location bounds (California)",
+            "Location bounds (Bengaluru Region)",
             lat_ok and lon_ok,
-            f"lat: [{df['latitude'].min():.2f}, {df['latitude'].max():.2f}], "
-            f"lon: [{df['longitude'].min():.2f}, {df['longitude'].max():.2f}]",
+            f"lat: [{df['latitude'].min():.4f}, {df['latitude'].max():.4f}], "
+            f"lon: [{df['longitude'].min():.4f}, {df['longitude'].max():.4f}]",
         )
 
     # ── 8. Dataset size ──────────────────────────────────────────────────
@@ -187,9 +184,9 @@ def get_column_profiles(df: pd.DataFrame) -> Dict[str, Dict]:
 
 
 if __name__ == "__main__":
-    from src.data.loader import load_california_housing
+    from src.data.loader import load_dataset
 
-    df = load_california_housing()
+    df = load_dataset()
     report = validate_dataset(df)
     print(f"\n{report.summary()}")
 
