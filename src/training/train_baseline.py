@@ -24,7 +24,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.config import AppConfig
-from src.data.loader import load_california_housing
+from src.data.loader import load_dataset
 from src.data.validator import validate_dataset
 from src.data.generator import generate_descriptions
 from src.features.engineer import engineer_features
@@ -49,7 +49,7 @@ def main():
 
     # ── 1. Load and validate ─────────────────────────────────────────────
     logger.info("\n── Step 1: Data Loading & Validation ──")
-    df = load_california_housing()
+    df = load_dataset()
     report = validate_dataset(df)
 
     if not report.all_passed:
@@ -57,8 +57,7 @@ def main():
 
     # ── 2. Generate descriptions (save for later hybrid training) ────────
     logger.info("\n── Step 2: Generate Descriptions ──")
-    descriptions = generate_descriptions(df)
-    df[AppConfig.data.text_column] = descriptions
+    df = generate_descriptions(df)
     save_dataframe(df, AppConfig.paths.data_interim / "housing_with_descriptions.csv")
 
     # ── 3. Split data ────────────────────────────────────────────────────
